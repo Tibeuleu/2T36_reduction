@@ -435,7 +435,7 @@ def get_error(data_array, headers=None, sub_shape=(15,15), display=False,
         #error_array[i] = np.sqrt(error_array[i]**2 + err_wav**2 + err_psf**2 + err_flat**2)
 
         background[i] = sub_image.sum()
-        data_array[i] = data_array[i] - sub_image.mean()
+        data_array[i] = data_array[i] - sub_image.mean()/2
         data_array[i][data_array[i] < 0.] = 0.
         if (data_array[i] < 0.).any():
             print(data_array[i])
@@ -533,7 +533,7 @@ def rebin_array(data_array, error_array, headers, pxsize, scale,
     rebinned_data, rebinned_error, rebinned_headers = [], [], []
     Dxy = np.array([1, 1],dtype=int)
 
-    aperture = header['apt-dia']    # Telescope aperture in mm
+    aperture = ref_header['aptdia']    # Telescope aperture in mm
     for i, enum in enumerate(list(zip(data_array, error_array, headers))):
         image, error, header = enum
         # Get current pixel size
@@ -684,7 +684,7 @@ def align_data(data_array, headers, error_array=None, upsample_factor=1.,
     # Create a rescaled null array that can contain any rotation of the
     #original image (and shifted images)
     shape = data_array.shape
-    res_shape = int(np.ceil(np.sqrt(1.5**2)*np.max(shape[1:])))
+    res_shape = int(np.ceil(np.sqrt(1.5)*np.max(shape[1:])))
     rescaled_image = np.zeros((shape[0],res_shape,res_shape))
     rescaled_error = np.ones((shape[0],res_shape,res_shape))
     rescaled_mask = np.ones((shape[0],res_shape,res_shape),dtype=bool)
@@ -891,7 +891,7 @@ def filter_avg(data_array, error_array, headers, data_mask, filters, FWHM=None,
                 instrument, cannot proceed.")
 
     # Sort images by filter : can be B, V, R, I, H, O
-    filt_bool, filt_data, filt_error, filt_headers = dict(), dict(), dict(), dict()
+    filt_bool, filt_data, filt_error, filt_headers, filt_avg, filt_err = dict(), dict(), dict(), dict(), dict(), dict()
     for filt in filters:
         filt_bool[filt] = np.array([hdr['filter']==filt for hdr in headers])
         if np.max(filt_bool[filt]):
@@ -899,39 +899,21 @@ def filter_avg(data_array, error_array, headers, data_mask, filters, FWHM=None,
             filt_error[filt] = error_array[filt_bool[filt]]
             filt_headers[filt] = [hdr for hdr in headers if hdr['filter']==filt]
 
-    if not(FWHM is None) and (smoothing.lower() in ['combine','combining']):
-        # Smooth by combining each polarizer images
-        filt_avg, filt_err = dict(), dict()
-        for filt in filters:
-            if np.max(filt_bool[filt]):
+            if not(FWHM is None) and (smoothing.lower() in ['combine','combining']):
+                # Smooth by combining each polarizer images
                 filt_avg[filt], filt_err[filt] = smooth_data(filt_data[filt],
                         filt_error[filt], data_mask, filt_headers[filt], FWHM=FWHM,
                         scale=scale, smoothing=smoothing)
 
-    else:
-        # Sum on each polarization filter.
-        filt_avg, filt_err = dict(), dict()
-        for filt in filters:
-            if np.max(filt_bool[filt]):
+            else:
+                # Sum on each polarization filter.
                 filt_avg[filt] = filt_data[filt].sum(axis=0)
                 filt_err[filt] = np.sum(filt_error[filt],axis=0)*np.sqrt(filt_error[filt].shape[0])
 
-        # Update headers
-        headers_dict = dict()
-        for header in headers:
-            filt = header['filter']
-            if np.max(filt_bool[filt]):
-                list_head = filt_headers[filt]
-                headers_dict[filt] = filt_headers[filt][0].copy()
-                headers_dict[filt]['exptime'] = np.sum([head['exptime'] for head in list_head])/len(list_head)
-        headers_array = [headers_dict[filt] for filt in filters if np.max(filt_bool[filt])]
-
-        if not(FWHM is None) and (smoothing.lower() in ['gaussian','gauss']):
-            # Smooth by convoluting with a gaussian each polX image.
-            for filt in filters:
-                if np.max(filt_bool[filt]):
+                if not(FWHM is None) and (smoothing.lower() in ['gaussian','gauss']):
+                    # Smooth by convoluting with a gaussian each polX image.
                         filt_avg[filt], filt_err[filt] = smooth_data(filt_avg[filt],
-                                filt_err[filt], data_mask, headers_array,
+                                filt_err[filt], data_mask, filt_headers[filt],
                                 FWHM=FWHM, scale=scale, smoothing=smoothing)
 
     # Construct the filter array and filter error array

@@ -88,6 +88,7 @@ def plot_obs(data_array, headers, shape=None, vmin=0., vmax=6., rectangle=None,
         ax = enum[0]
         data = enum[1]
         instr = headers[i]['telescop']
+        filename = headers[i]['filename']
         exptime = headers[i]['exptime']
         filt = headers[i]['filter']
         #plots
@@ -101,7 +102,7 @@ def plot_obs(data_array, headers, shape=None, vmin=0., vmax=6., rectangle=None,
                 color='black')
         ax.plot([0,data.shape[1]-1], [data.shape[0]/2, data.shape[0]/2], lw=1,
                 color='black')
-        ax.annotate(instr,color='white',fontsize=5,xy=(0.02, 0.95),
+        ax.annotate(instr+' : '+filename,color='white',fontsize=5,xy=(0.02, 0.95),
                 xycoords='axes fraction')
         ax.annotate(filt,color='white',fontsize=10,xy=(0.02, 0.02),
                 xycoords='axes fraction')
