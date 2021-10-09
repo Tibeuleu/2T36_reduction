@@ -654,9 +654,7 @@ def align_data(data_array, headers, error_array=None, upsample_factor=1.,
         raise ValueError("All images in data_array must have same shape as\
             ref_data")
     if error_array is None:
-        _, error_array, background = get_error(data_array, return_background=True)
-    else:
-        _, _, background = get_error(data_array, return_background=True)
+        _, error_array = get_error(data_array)
 
     # Crop out any null edges
     #(ref_data must be cropped as well)
@@ -795,6 +793,7 @@ def smooth_data(data_array, error_array, data_mask, headers, FWHM=1.,
     fmax = np.finfo(np.float64).max
 
     if smoothing.lower() in ['combine','combining']:
+        print("Combining...")
         # Smooth using N images combination algorithm
         # Weight array
         weight = 1./error_array**2
@@ -806,6 +805,8 @@ def smooth_data(data_array, error_array, data_mask, headers, FWHM=1.,
 
         # Combination smoothing algorithm
         for r in range(smoothed.shape[0]):
+            if (int((r+1)/smoothed.shape[0]*200)%20 == 0):
+                print("{0:.2f}%".format((1-r/smoothed.shape[0])*100))
             for c in range(smoothed.shape[1]):
                 # Compute distance from current pixel
                 dist_rc = np.where(data_mask, fmax, np.sqrt((r-xx)**2+(c-yy)**2))
@@ -820,22 +821,25 @@ def smooth_data(data_array, error_array, data_mask, headers, FWHM=1.,
         error[np.isnan(error)] = 0.
 
     elif smoothing.lower() in ['gauss','gaussian']:
+        print("Smoothing...")
         # Convolution with gaussian function
         smoothed = np.zeros(data_array.shape)
         error = np.zeros(error_array.shape)
         for i,image in enumerate(data_array):
             xx, yy = np.indices(image.shape)
             for r in range(image.shape[0]):
+                if (int((r+1)/image.shape[0]*200)%20 == 0):
+                    print("{0:.2f}%".format((1-r/image.shape[0])*100))
                 for c in range(image.shape[1]):
                     dist_rc = np.where(data_mask, fmax, np.sqrt((r-xx)**2+(c-yy)**2))
                     g_rc = np.exp(-0.5*(dist_rc/stdev)**2)/(2.*np.pi*stdev**2)
-                    smoothed[i][r,c] = (1.-data_mask[r,c])*np.sum(data_array*weight*g_rc)/np.sum(weight*g_rc)
-                    error[i][r,c] = np.sqrt(np.sum(weight*g_rc**2))/np.sum(weight*g_rc)
+                    smoothed[i][r,c] = (1.-data_mask[r,c])*np.sum(image*g_rc)
+                    error[i][r,c] = np.sqrt(np.sum(error_array[i]*g_rc**2))
 
             # Nan handling
-            error[i][np.isnan(smoothed)] = 0.
-            smoothed[i][np.isnan(smoothed)] = 0.
-            error[i][np.isnan(error)] = 0.
+            error[i][np.isnan(smoothed[i])] = 0.
+            smoothed[i][np.isnan(smoothed[i])] = 0.
+            error[i][np.isnan(error[i])] = 0.
 
     else:
         raise ValueError("{} is not a valid smoothing option".format(smoothing))
@@ -912,9 +916,11 @@ def filter_avg(data_array, error_array, headers, data_mask, filters, FWHM=None,
 
                 if not(FWHM is None) and (smoothing.lower() in ['gaussian','gauss']):
                     # Smooth by convoluting with a gaussian each polX image.
-                        filt_avg[filt], filt_err[filt] = smooth_data(filt_avg[filt],
-                                filt_err[filt], data_mask, filt_headers[filt],
+                        data, error = smooth_data(np.array([filt_avg[filt]]),
+                                np.array([filt_err[filt]]), data_mask, [filt_headers[filt][0]],
                                 FWHM=FWHM, scale=scale, smoothing=smoothing)
+                        filt_avg[filt] = data[0]
+                        filt_err[filt] = error[0]
 
     # Construct the filter array and filter error array
     for header in headers:

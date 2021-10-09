@@ -11,7 +11,7 @@ prototypes :
 
 import copy
 import numpy as np
-import matplotlib.pyplot as plt
+from matplotlib import colors, cm, pyplot as plt
 from matplotlib.patches import Rectangle
 from matplotlib.widgets import RectangleSelector
 import matplotlib.font_manager as fm
@@ -42,7 +42,6 @@ def sci_not(v,err,rnd=1):
     else:
         output += r" $\pm$ {0}".format(round(err*10**power,rnd))
     return output+r")e{0}".format(-power)
-
 
 def plot_obs(data_array, headers, shape=None, vmin=0., vmax=6., rectangle=None,
         savename=None, plots_folder=""):
