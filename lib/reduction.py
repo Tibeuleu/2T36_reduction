@@ -393,7 +393,7 @@ def get_error(data_array, headers=None, sub_shape=(15,15), display=False,
     # Crop out any null edges
     data = data_array#, error = crop_array(data_array, headers, step=5, null_val=0., inside=False)
 
-    sub_shape = np.array(sub_shape)
+    sub_shape = np.array(sub_shape, dtype=int)
     # Make sub_shape of odd values
     if not(np.all(sub_shape%2)):
         sub_shape += 1-sub_shape%2
@@ -435,8 +435,8 @@ def get_error(data_array, headers=None, sub_shape=(15,15), display=False,
         #error_array[i] = np.sqrt(error_array[i]**2 + err_wav**2 + err_psf**2 + err_flat**2)
 
         background[i] = sub_image.sum()
-        data_array[i] = data_array[i] - sub_image.mean()/2
-        data_array[i][data_array[i] < 0.] = 0.
+        data_array[i] = data_array[i] - sub_image.mean()
+        data_array[i][data_array[i] <= 0.] = np.min(data_array[i][data_array[i] > 0.])
         if (data_array[i] < 0.).any():
             print(data_array[i])
 
@@ -663,7 +663,7 @@ def align_data(data_array, headers, error_array=None, upsample_factor=1.,
     full_array = np.concatenate((data_array,[ref_data]),axis=0)
     err_array = np.concatenate((error_array,[np.zeros(ref_data.shape)]),axis=0)
 
-    #full_array, err_array = crop_array(full_array, headers, step=5,
+    #full_array, err_array = crop_array(full_array, headers, step=5, null_val=0.,
     #        inside=False)
 
     data_array, ref_data = full_array[:-1], full_array[-1]
@@ -684,16 +684,16 @@ def align_data(data_array, headers, error_array=None, upsample_factor=1.,
     # Create a rescaled null array that can contain any rotation of the
     #original image (and shifted images)
     shape = data_array.shape
-    res_shape = int(np.ceil(np.sqrt(1.5)*np.max(shape[1:])))
-    rescaled_image = np.zeros((shape[0],res_shape,res_shape))
-    rescaled_error = np.ones((shape[0],res_shape,res_shape))
-    rescaled_mask = np.ones((shape[0],res_shape,res_shape),dtype=bool)
+    res_shape = (np.ceil(np.sqrt(1.1)*np.array(shape[1:]))).astype(int)
+    rescaled_image = np.zeros((shape[0],res_shape[0],res_shape[1]))
+    rescaled_error = np.ones((shape[0],res_shape[0],res_shape[1]))
+    rescaled_mask = np.ones((shape[0],res_shape[0],res_shape[1]),dtype=bool)
     res_center = (np.array(rescaled_image.shape[1:])/2).astype(int)
 
     shifts, errors = [], []
     for i,image in enumerate(data_array):
         # Initialize rescaled images to background values
-        rescaled_error[i] *= background[i]
+        #rescaled_error[i] *= background[i]
         # Get shifts and error by cross-correlation to ref_data
         shift, error, phase_diff = phase_cross_correlation(ref_data, image,
                 upsample_factor=upsample_factor)

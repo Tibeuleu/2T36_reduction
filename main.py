@@ -14,7 +14,6 @@ import lib.fits as proj_fits        #Functions to handle fits files
 import lib.calibration as proj_cal  #Functions used in calibration pipeline
 import lib.reduction as proj_red    #Functions used in reduction pipeline
 import lib.plots as proj_plots      #Functions for plotting data
-from lib.convex_hull import image_hull
 
 
 def main():
@@ -41,10 +40,10 @@ def main():
         psf_shape=(9,9)
         iterations = 10
     # Cropping
-    display_crop = False
+    display_crop = True
     # Error estimation
     error_sub_shape = (100,100)
-    display_error = False
+    display_error = True
     # Data binning
     rebin = False
     if rebin:
@@ -53,7 +52,7 @@ def main():
         rebin_operation = 'sum'     #sum or average
     # Alignement
     align_center = 'image'          #If None will align image to image center
-    display_data = False
+    display_data = True
     # Smoothing
     smoothing_function = 'combine'  #gaussian_after, gaussian or combine
     smoothing_FWHM = None           #If None, no smoothing is done
@@ -80,13 +79,17 @@ def main():
                         Possible value : {2}".format(filt, infiles[i], filters))
 
     # Calibrate data using instrument calibration files and normalise obtained images.
-    data_array, headers = proj_cal.image_calibration(data_array, headers, calib_folder=calib_folder)
     for i in range(len(infiles)):
         headers[i]['filename'] = infiles[i]
-    data_array = data_array/data_array.mean(axis=0)
+    data_array, headers = proj_cal.image_calibration(data_array, headers, calib_folder=calib_folder)
+
+    center = np.ceil(np.array(data_array.shape[1:])/2.).astype(int)
+    extent = np.ceil((np.array(data_array.shape[1:])-0)/4.).astype(int)
+    data_array = data_array[:,center[0]-extent[0]:center[0]+extent[0],center[1]-extent[1]:center[1]+extent[1]]
 
     # Crop data to remove outside blank margins.
-    data_array, error_array = proj_red.crop_array(data_array, headers, step=5, null_val=0., inside=True, display=display_crop, savename=figname, plots_folder=plots_folder)
+    data_array, error_array = proj_red.get_error(data_array, headers=headers, sub_shape=error_sub_shape, display=display_error, savename=figname+"_errors", plots_folder=plots_folder)
+    #data_array, error_array = proj_red.crop_array(data_array, headers, step=10, null_val=1e-5, inside=True, display=display_crop, savename=figname, plots_folder=plots_folder)
 
     # Sort images by filters
     filter_bool, filter_data, filter_error, filter_headers = dict(), dict(), dict(), dict()
@@ -106,7 +109,7 @@ def main():
                 filter_data[filt] = proj_red.deconvolve_array(filter_data[filt], filter_headers[filt], psf=psf, FWHM=psf_FWHM, scale=psf_scale, shape=psf_shape, iterations=iterations)
 
             # Estimate error from data background, estimated from sub-image of desired sub_shape.
-            filter_data[filt], filter_error[filt] = proj_red.get_error(filter_data[filt], headers=filter_headers[filt], sub_shape=error_sub_shape, display=display_error, savename=figname+"_errors", plots_folder=plots_folder)
+            filter_data[filt], filter_error[filt] = proj_red.get_error(filter_data[filt], headers=filter_headers[filt], sub_shape=error_sub_shape)
 
             # Rebin data to desired pixel size.
             Dxy = np.array([np.min([header['xbinning'],header['ybinning']]) for header in headers])
@@ -115,7 +118,7 @@ def main():
 
             # Align and rescale images with oversampling.
             filter_data[filt], filter_error[filt], data_mask = proj_red.align_data(filter_data[filt], filter_headers[filt], filter_error[filt], upsample_factor=int(Dxy.min()), ref_data=filter_data[filt][-1], ref_center=align_center, return_shifts=False)
-            #proj_plots.plot_obs(filter_data[filt], filter_headers[filt], vmin=filter_data[filt].min(), vmax=filter_data[filt].max())
+            proj_plots.plot_obs(np.log(filter_data[filt]), filter_headers[filt], vmin=0., vmax=np.log(filter_data[filt]).max())
             filter_data_array += [value for value in filter_data[filt]]
             filter_error_array += [value for value in filter_error[filt]]
             filter_headers_array += [value for value in filter_headers[filt]]
@@ -131,11 +134,11 @@ def main():
     if display_data:
         proj_plots.plot_obs(data_array, headers, vmin=data_array.min(), vmax=data_array.max(), savename=figname+"_center_"+align_center, plots_folder=plots_folder)
 
-        ## Step 2:
+    ## Step 2:
     # Compute avg on each image
     data_array, error_array, headers = proj_red.filter_avg(data_array, error_array, headers, data_mask, filters=filters, FWHM=smoothing_FWHM, scale=smoothing_scale, smoothing=smoothing_function)
     data_array, error_array, data_mask = proj_red.align_data(data_array, headers, error_array, upsample_factor=int(Dxy.min()), ref_data=data_array[-1], ref_center=align_center, return_shifts=False)
-    data_array, error_array = proj_red.crop_array(data_array, headers, step=1, null_val=1e-7, inside=True, display=display_crop, savename=figname, plots_folder=plots_folder)
+    #data_array, error_array = proj_red.crop_array(data_array, headers, step=5, null_val=1e-3, inside=True, display=display_crop, savename=figname, plots_folder=plots_folder)
     t3 = time()
     print("Elapsed time {0:.2f} seconds.".format(t3-t2))
     print("Save to fits and display images.")

@@ -19,6 +19,8 @@ from copy import copy, deepcopy
 from glob import glob
 from astropy.io import fits
 from astropy import wcs
+from scipy.interpolate import interp1d
+import matplotlib.pyplot as plt
 import lib.fits as proj_fits
 
 
@@ -55,7 +57,7 @@ def get_master_bias(infiles=None, name_template="*Bias.fit", calib_folder=""):
             for file in glob("{0:s}{1:s}".format(calib_folder, name_template)):
                 infiles.append(file[len(calib_folder):])
         data_array, headers = proj_fits.get_obs_data(infiles, data_folder=calib_folder, compute_flux=False)
-        master_bias_data = data_array.mean(axis=0)
+        master_bias_data = np.median(data_array, axis=0)
 
         # Save to fits for next time
         master_bias_header = headers[0].copy()
@@ -68,6 +70,52 @@ def get_master_bias(infiles=None, name_template="*Bias.fit", calib_folder=""):
         hdul.writeto("{0:s}master_bias.fits".format(calib_folder))
 
     return master_bias_data
+
+def interpolate_dark(exptime, infiles=None, name_template="*Dark[0-9]*", calib_folder=""):
+    """
+    Interpolate master dark data for a given exposure time. Then save to
+    master_dark_[exptime]s.fits file in the calib_folder.
+    ----------
+    Inputs:
+    exptime : float, int
+        The exposure time in seconds of the darks calibration.
+    infiles : strlist, optionnal
+        List of the fits file names to compute the master bias from.
+        If None, will look for previously computed master bias, or compute it
+        using a list obtained from the name_template argument.
+        Default to None
+    name_template : str, optional
+        String that should be matching the fits files name from which the
+        master bias should be computed.
+        Default to "*Dark[0-9]*"
+    calib_folder : str, optional
+        Relative or absolute path to the folder containing the calibration
+        fits file.
+    ----------
+    Returns:
+    master_dark_data : numpy.ndarray
+        2D array of float containing the master dark data.
+    """
+    if infiles is None:
+        infiles = []
+        for file in glob("{0:s}{1:s}".format(calib_folder, name_template)) \
+                + glob("{0:s}{1:s}".format(calib_folder, "master_dark_[0-9]*")):
+            infiles.append(file[len(calib_folder):])
+    data_array, headers = proj_fits.get_obs_data(infiles, data_folder=calib_folder, compute_flux=False)
+
+    dark_exp = np.unique(np.array([header['exptime'] for header in headers]))
+    dark = np.zeros((len(dark_exp), data_array.shape[1], data_array.shape[2]))
+    for i,time in enumerate(dark_exp):
+        mask = np.array([head['exptime']==time for head in headers])
+        dark[i] = np.median(data_array[mask], axis=0)
+
+    master_dark_data = np.zeros(dark.shape[1:])
+    for r in range(dark.shape[1]):
+        for c in range(dark.shape[2]):
+            f = interp1d(dark_exp, dark[:,r,c], kind='cubic', fill_value='extrapolate')
+            master_dark_data[r,c] = f(exptime)
+
+    return master_dark_data
 
 def get_master_dark(exptime, infiles=None, name_template="*Dark[0-9]*", calib_folder=""):
     """
@@ -106,16 +154,17 @@ def get_master_dark(exptime, infiles=None, name_template="*Dark[0-9]*", calib_fo
                 infiles.append(file[len(calib_folder):])
         data_array, headers = proj_fits.get_obs_data(infiles, data_folder=calib_folder, compute_flux=False)
         dark_exp = np.array([header['exptime'] for header in headers])
-        if not(float(exptime) in np.unique(dark_exp)):
-            raise ValueError("Requested exptime has not been observed in dark setup.\
-                    Possible values : {}".format(np.unique(dark_exp)))
         mask = (dark_exp == float(exptime))
-        master_dark_data = data_array[mask].mean(axis=0)
+        if not(float(exptime) in np.unique(dark_exp)):
+            master_dark_data = interpolate_dark(exptime, calib_folder=calib_folder)
+        else:
+            master_dark_data = np.median(data_array[mask],axis=0)
 
         # Save to fits for next time
         master_dark_header = headers[np.argmax(mask)].copy()
         master_dark_header.remove('OBJECT')
         master_dark_header['CCD-TEMP'] = np.mean([hdr['CCD-TEMP'] for hdr in headers])
+        master_dark_header['EXPTIME'] = exptime
         master_dark_header['IMAGETYP'] = "Master Dark"
         master_dark_header.add_history("Cal Master Dark {0:d}s, {1:d} inputs".format(int(exptime), data_array[mask].shape[0]))
         hdu = fits.PrimaryHDU(data=master_dark_data, header=master_dark_header)
@@ -166,8 +215,18 @@ def get_master_flat(filt, infiles=None, name_template="Flat-????_{}.fit", calib_
             for file in glob("{0:s}{1:s}".format(calib_folder,name_template)):
                 infiles.append(file[len(calib_folder):])
         data_array, headers = proj_fits.get_obs_data(infiles, data_folder=calib_folder, compute_flux=False)
-        master_flat_data = data_array.mean(axis=0)
-
+        # Get Master Darks and Bias
+        dark = {}
+        for i,head in enumerate(headers):
+            dark[head['exptime']] = get_master_dark(head['exptime'], calib_folder=calib_folder)
+        bias = get_master_bias(calib_folder=calib_folder)
+        # Compute temporary flat
+        flat = []
+        for i,data in enumerate(data_array):
+            flat.append(data-bias-dark[headers[i]['exptime']])
+        flat = np.median(flat, axis=0)
+        flat += np.median(flat)
+        master_flat_data = flat/np.median(flat)
         # Save to fits for next time
         master_flat_header = headers[0].copy()
         master_flat_header.remove('OBJECT')
@@ -212,17 +271,6 @@ def image_calibration(data_array, headers, calib_folder="", bias_files=None,
         filt_list.append(hdr['filter'])
         exp_list.append(hdr['exptime'])
 
-    # Get available dark exposure time for each image
-    dark_exp = np.array([30., 60., 240., 480., 720., 1200.])
-    for i in range(len(exp_list)):
-        j=0
-        while (j < len(dark_exp)) and (exp_list[i] > dark_exp[j]):
-            j += 1
-        if j == len(dark_exp):
-            print("Warning : exposure time longer than longest dark")
-            j -= 1
-        exp_list[i] = dark_exp[j]
-
     master_bias = get_master_bias(infiles=bias_files, calib_folder=calib_folder)
     master_dark = dict([(time, get_master_dark(time, infiles=dark_files, calib_folder=calib_folder)) for time in np.unique(exp_list)])
     master_flat = dict([(filt, get_master_flat(filt, infiles=flat_files, calib_folder=calib_folder)) for filt in np.unique(filt_list)])
@@ -232,10 +280,11 @@ def image_calibration(data_array, headers, calib_folder="", bias_files=None,
     for i,data in enumerate(data_array):
         filt = filt_list[i]
         time = exp_list[i]
-        flatfield = master_flat[filt]-master_bias-master_dark[time]
-        flatfield = flatfield/flatfield.mean()
 
-        data_calibrated[i] = (data-master_bias-master_dark[time])/flatfield
+        data_calibrated[i] = (data - master_bias - master_dark[time])/master_flat[filt]
+        #data_calibrated[i] += np.abs(np.median(data_calibrated[i]))
+        data_calibrated[i][data_calibrated[i] <= 0.] = np.min(data_calibrated[i][data_calibrated[i] > 0.])
+        #data_calibrated[i] = data_calibrated[i]/data_calibrated[i].max()*100.
         headers_calibrated[i].add_history("Calibration using bias, dark and flatfield done.")
 
     return data_calibrated, headers_calibrated
